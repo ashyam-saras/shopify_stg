@@ -1,0 +1,71 @@
+name: Trigger Client Workflows
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  update-client-package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - id: "auth"
+        uses: "google-github-actions/auth@v2"
+        with:
+          credentials_json: "${{ secrets.PULSE_CICD_SERVICE_ACCOUNT }}"
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.PROJECT_ID }}
+
+      - name: Install JQ
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Fetch clients to update from BQ
+        run: |
+          gcloud config set functions/region us-central1
+          echo "Querying BigQuery for client IDs and names..."
+          bq query --format=json --use_legacy_sql=false \
+            "SELECT cg.client_id \
+            FROM insightsprod.edm_insights_metadata.client_git AS cg \
+            JOIN insightsprod.edm_insights_metadata.packages AS p \
+            ON cg.client_id = p.client_id \
+            WHERE \
+              cg.updated_by_user = FALSE \
+              AND cg.beta_opt_in = FALSE \
+              AND p.package_type = 'git' \
+              AND p.package_version = '${{ github.ref_name }}'" | awk '/^\[/{p=1}p' > query_results.json
+          cat query_results.json
+
+      - name: Trigger Client Workflows
+        env:
+          ORG_NAME: sarasanalytics-com
+          GH_TOKEN: ${{ secrets.PULSE_GHUB_PAT }}
+        run: |
+          # Read client IDs from the JSON file into an array
+          mapfile -t client_ids < <(jq -r '.[].client_id' query_results.json)
+
+          # Fetch all repositories in the organization
+          echo "Fetching repositories from organization: $ORG_NAME"
+          mapfile -t repositories < <(gh api --header 'accept: application/vnd.github+json' /orgs/$ORG_NAME/repos --paginate | jq -r '.[].name')
+          echo "Total repositories fetched: ${#repositories[@]}"
+
+          # Iterate over repositories and check if any client ID is part of the repository name
+          echo "Checking for repositories with client IDs..."
+          for repo in "${repositories[@]}"; do
+            for client_id in "${client_ids[@]}"; do
+              if [[ $repo =~ "_${client_id}_" ]]; then
+                echo "Triggering library-updated event for repository: $ORG_NAME/$repo with client ID: $client_id"
+                gh api repos/$ORG_NAME/$repo/dispatches \
+                  -X POST \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  -f event_type='edm-insights-package-update'
+                break
+              fi
+            done
+          done

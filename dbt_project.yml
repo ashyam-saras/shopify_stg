@@ -1,0 +1,54 @@
+name: "edm_staging"
+version: "1.0.0"
+config-version: 2
+require-dbt-version: [">=1.0.0", "<2.0.0"]
+profile: "edm_data_transformation"
+
+vars:
+  raw_database: "insightsprod"
+  raw_schema: "{{ target.dataset }}_raw"
+  default_ddl_schema: ""
+  shared_schema: "pulse_shared_prod"
+  mdl_database: "insightsprod"
+  mdl_schema: "{{ target.dataset }}_prerequisites"
+  prerequisite_mdl_schema: "{{ target.dataset }}_prerequisites"
+  audit_schema: "edm_insights_metadata"
+
+  timezone_conversion_flag: true # Flag to enable timezone conversion
+  currency_conversion_flag: true # Flag to enable currency conversion using exchange rates
+  to_timezone: "America/Chicago" # Timezone to convert the data to
+  "dbt_date:time_zone": "UTC" # dbt_date:time_zone is used in tests to compare dates like in expect_row_values_to_have_recent_data
+
+  SHOPIFYV2: true
+
+# These configurations specify where dbt should look for different types of files.
+# The `model-paths` config, for example, states that models in this project can be
+# found in the "models/" directory. You probably won't need to change these!
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+docs-paths: ["docs"]
+
+target-path: "target" # directory which will store compiled SQL files
+clean-targets: # directories to be removed by `dbt clean`
+  - "target"
+  - "dbt_packages"
+
+# Configuring models
+# Full documentation: https://docs.getdbt.com/docs/configuring-models
+models:
+  edm_data_transformation:
+    +post-hook:
+      - "{{ incremental_tmp_table_dropper(this) }}"
+    Staging:
+      +schema: staging
+
+# Tests configuration
+tests:
+  +store_failures: true
+
+on-run-end:
+  - "{{ log_dbt_results(results) }}"
