@@ -51,4 +51,4 @@ tests:
   +store_failures: true
 
 on-run-end:
-  - "{{ log_dbt_results(results) }}"
+  - "{{ edm_core.log_dbt_results(results) }}"
